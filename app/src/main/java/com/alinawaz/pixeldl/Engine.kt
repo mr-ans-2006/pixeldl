@@ -8,12 +8,13 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
-import com.yausername.youtubedl_android.YoutubeDL
-import com.yausername.youtubedl_android.YoutubeDLRequest
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
+import com.farimarwat.commons.UpdateChannel
+import com.farimarwat.commons.YoutubeDLRequest
+import com.farimarwat.library.YoutubeDL
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 data class QualityOption(
     val label: String,
@@ -44,29 +45,75 @@ object Engine {
     var ready: Boolean = false
         private set
 
-    suspend fun init(context: Context) = withContext(Dispatchers.IO) {
-        YoutubeDL.getInstance().init(context)
-        ready = true
+    suspend fun init(context: Context) = suspendCancellableCoroutine { cont ->
+        YoutubeDL.init(
+            appContext = context.applicationContext,
+            withFfmpeg = true,
+            withAria2c = false,
+            onSuccess = {
+                ready = true
+                if (cont.isActive) cont.resume(Unit)
+            },
+            onError = { e ->
+                if (cont.isActive) {
+                    cont.resumeWithException(
+                        RuntimeException(e.message ?: "Engine failed to start", e)
+                    )
+                }
+            }
+        )
     }
 
-    suspend fun update(context: Context): String = withContext(Dispatchers.IO) {
-        val status = YoutubeDL.getInstance().updateYoutubeDL(context)
-        status.toString()
+    suspend fun update(context: Context): String {
+        var result: String? = null
+        var failure: Throwable? = null
+        YoutubeDL.updateYoutubeDL(
+            appContext = context.applicationContext,
+            updateChannel = UpdateChannel.STABLE,
+            onSuccess = { status -> result = status.name },
+            onError = { e -> failure = e }
+        )
+        failure?.let {
+            throw RuntimeException(it.message ?: "Update failed", it)
+        }
+        return result ?: "DONE"
     }
 
-    suspend fun fetchInfo(url: String): VideoInfo = withContext(Dispatchers.IO) {
+    suspend fun fetchInfo(url: String): VideoInfo = suspendCancellableCoroutine { cont ->
+        if (!ready) {
+            cont.resumeWithException(
+                IllegalStateException("Engine is still starting - wait for ENGINE READY at the top")
+            )
+            return@suspendCancellableCoroutine
+        }
         val req = YoutubeDLRequest(url)
-        req.addOption("--dump-single-json")
         req.addOption("--no-playlist")
         req.addOption("--no-warnings")
-        val resp = YoutubeDL.getInstance().execute(req)
-        val json = JSONObject(resp.out)
-        VideoInfo(
-            title = json.optString("title", "Unknown title"),
-            thumbnail = json.optString("thumbnail").ifBlank { null },
-            uploader = json.optString("uploader").ifBlank { null },
-            durationSec = json.optInt("duration", 0),
-            site = json.optString("extractor_key").ifBlank { null }
+        YoutubeDL.getInfo(
+            request = req,
+            onSuccess = { info ->
+                if (cont.isActive) {
+                    cont.resume(
+                        VideoInfo(
+                            title = info.title?.takeIf { it.isNotBlank() }
+                                ?: info.fulltitle?.takeIf { it.isNotBlank() }
+                                ?: "Unknown title",
+                            thumbnail = info.thumbnail?.takeIf { it.isNotBlank() },
+                            uploader = info.uploader?.takeIf { it.isNotBlank() },
+                            durationSec = info.duration,
+                            site = (info.extractorKey ?: info.extractor)
+                                ?.takeIf { it.isNotBlank() }
+                        )
+                    )
+                }
+            },
+            onError = { e ->
+                if (cont.isActive) {
+                    cont.resumeWithException(
+                        RuntimeException(e.message ?: "Could not read this link", e)
+                    )
+                }
+            }
         )
     }
 
@@ -75,7 +122,13 @@ object Engine {
         url: String,
         option: QualityOption,
         onProgress: (Float, Long, String) -> Unit
-    ): File = withContext(Dispatchers.IO) {
+    ): File = suspendCancellableCoroutine { cont ->
+        if (!ready) {
+            cont.resumeWithException(
+                IllegalStateException("Engine is still starting - wait for ENGINE READY at the top")
+            )
+            return@suspendCancellableCoroutine
+        }
         val outDir = File(context.getExternalFilesDir(null), "downloads").apply { mkdirs() }
         val before = outDir.listFiles()?.map { it.name }?.toSet() ?: emptySet()
         val req = YoutubeDLRequest(url)
@@ -89,13 +142,45 @@ object Engine {
         } else {
             req.addOption("--merge-output-format", "mp4")
         }
-        YoutubeDL.getInstance().execute(req, "pixeldl") { progress, eta, line ->
-            onProgress(progress, eta, line)
-        }
-        val newFiles = (outDir.listFiles()?.toList() ?: emptyList())
-            .filter { it.name !in before && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
-        newFiles.maxByOrNull { it.length() }
-            ?: throw IllegalStateException("Download finished but no file was found")
+        YoutubeDL.download(
+            request = req,
+            pId = "pixeldl",
+            progressCallBack = { progress, eta, line -> onProgress(progress, eta, line) },
+            onStartProcess = { },
+            onEndProcess = { resp ->
+                if (cont.isActive) {
+                    if (resp.exitCode == 0) {
+                        val newFiles = (outDir.listFiles()?.toList() ?: emptyList())
+                            .filter {
+                                it.name !in before &&
+                                    !it.name.endsWith(".part") &&
+                                    !it.name.endsWith(".ytdl")
+                            }
+                        val file = newFiles.maxByOrNull { it.length() }
+                        if (file != null) {
+                            cont.resume(file)
+                        } else {
+                            cont.resumeWithException(
+                                IllegalStateException("Download finished but no file was found")
+                            )
+                        }
+                    } else {
+                        cont.resumeWithException(
+                            IllegalStateException(
+                                resp.err?.takeIf { it.isNotBlank() } ?: "Download failed"
+                            )
+                        )
+                    }
+                }
+            },
+            onError = { e ->
+                if (cont.isActive) {
+                    cont.resumeWithException(
+                        RuntimeException(e.message ?: "Download failed", e)
+                    )
+                }
+            }
+        )
     }
 
     /** Copies the finished file into the phone's Movies/PixelDL or Music/PixelDL so any player can see it. */
