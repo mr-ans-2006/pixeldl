@@ -12,10 +12,24 @@ android {
         applicationId = "com.alinawaz.pixeldl"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
         ndk {
             abiFilters += "arm64-v8a"
+        }
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            // CI signs with a fixed keystore (decoded from keystore.b64 in the repo)
+            // so updates install over older builds. Local builds keep the default key.
+            val ksPath = System.getenv("PIXELDL_KEYSTORE")
+            if (ksPath != null) {
+                storeFile = file(ksPath)
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 
@@ -37,6 +51,7 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            keepDebugSymbols += "**/*.zip.so"
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -53,6 +68,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
-    implementation("com.github.yausername.youtubedl-android:library:0.15.0")
-    implementation("com.github.yausername.youtubedl-android:ffmpeg:0.15.0")
+    implementation("io.github.farimarwat:youtubedl-boom-lite:1.0.24")
+    implementation("io.github.farimarwat:youtubedl-boom-commons:1.3")
 }
