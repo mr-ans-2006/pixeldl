@@ -440,7 +440,7 @@ fun SetupScreen() {
 
         PixelPanel(Modifier.fillMaxWidth()) {
             Text(
-                "PixelDL v1.0\nEngine: yt-dlp (open source)\nVideos save to Movies > PixelDL\nAudio saves to Music > PixelDL\nNo ads - no tracking - no account",
+                "PixelDL v1.1\nEngine: yt-dlp (open source)\nVideos save to Movies > PixelDL\nAudio saves to Music > PixelDL\nNo ads - no tracking - no account",
                 fontFamily = PixelBody, fontSize = 17.sp, color = Px.Paper
             )
         }
@@ -521,5 +521,10 @@ fun formatDate(ms: Long): String =
 fun cleanError(e: Exception): String {
     val msg = e.message ?: "Something went wrong"
     val line = msg.lines().firstOrNull { it.contains("ERROR", ignoreCase = true) }
-    return (line ?: msg).take(160)
+    var text = (line ?: msg).trim()
+    // yt-dlp messages already start with "ERROR:" and the UI adds its own prefix.
+    while (text.startsWith("ERROR:", ignoreCase = true)) {
+        text = text.removeRange(0, "ERROR:".length).trim()
+    }
+    return text.take(160)
 }
