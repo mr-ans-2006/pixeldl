@@ -1,0 +1,55 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Download pixel fonts
+        run: |
+          mkdir -p app/src/main/res/font
+          curl -sL -o app/src/main/res/font/press_start_2p.ttf https://github.com/google/fonts/raw/main/ofl/pressstart2p/PressStart2P-Regular.ttf
+          curl -sL -o app/src/main/res/font/vt323.ttf https://github.com/google/fonts/raw/main/ofl/vt323/VT323-Regular.ttf
+          ls -la app/src/main/res/font
+
+      - name: Generate launcher icons
+        run: |
+          pip install --quiet pillow
+          base64 -d app-icon.b64 > /tmp/icon.webp
+          python3 make_icons.py /tmp/icon.webp
+
+      - name: Build debug APK
+        run: gradle assembleDebug --console=plain
+
+      - name: Upload APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PixelDL-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish APK to release v1.0
+        run: |
+          gh release delete v1.0 --yes || true
+          gh release create v1.0 app/build/outputs/apk/debug/app-debug.apk --title "PixelDL v1.0" --notes "PixelDL - pixel-art video downloader for Android. YouTube, Instagram, Facebook, TikTok, X and 1000+ sites. No ads. Powered by yt-dlp."
+        env:
+          GH_TOKEN: ${{ github.token }}
