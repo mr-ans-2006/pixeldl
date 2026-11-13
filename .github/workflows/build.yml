@@ -38,6 +38,11 @@ jobs:
           base64 -d app-icon.b64 > /tmp/icon.webp
           python3 make_icons.py /tmp/icon.webp
 
+      - name: Decode signing keystore
+        run: |
+          base64 -d keystore.b64 > "$RUNNER_TEMP/pixeldl.keystore"
+          echo "PIXELDL_KEYSTORE=$RUNNER_TEMP/pixeldl.keystore" >> "$GITHUB_ENV"
+
       - name: Build debug APK
         run: gradle assembleDebug --console=plain
 
@@ -47,9 +52,9 @@ jobs:
           name: PixelDL-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Publish APK to release v1.0
+      - name: Publish APK to release v1.1
         run: |
-          gh release delete v1.0 --yes || true
-          gh release create v1.0 app/build/outputs/apk/debug/app-debug.apk --title "PixelDL v1.0" --notes "PixelDL - pixel-art video downloader for Android. YouTube, Instagram, Facebook, TikTok, X and 1000+ sites. No ads. Powered by yt-dlp."
+          gh release delete v1.1 --yes || true
+          gh release create v1.1 app/build/outputs/apk/debug/app-debug.apk --title "PixelDL v1.1" --notes "PixelDL v1.1 - fixed the download engine (new library with Python 3.12 and yt-dlp 2026). Uninstall v1.0 before installing this one; future updates will install cleanly. YouTube, Instagram, Facebook, TikTok, X and 1000+ sites. No ads."
         env:
           GH_TOKEN: ${{ github.token }}
